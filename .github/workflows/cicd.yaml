@@ -1,0 +1,87 @@
+
+name: Image Build and Publish
+
+on:
+  push:
+    branches:
+      - main
+      - production
+    paths-ignore:
+      - '**/README.md'
+      - '**/cicd.yaml'
+jobs:
+
+  Build:
+    name: "Build"
+    runs-on: [self-hosted, Linux]
+    steps:
+
+      - name: "Setup - Checkout"
+        uses: actions/checkout@v2.1.0
+        with:
+          fetch-depth: 0
+
+      - name: Docker Build and Tag repo
+        run: |
+              docker build --no-cache -t ${GITHUB_REPOSITORY#*/}:${GITHUB_SHA::8} .
+
+  Dev-Deploy:
+    needs: Build
+    name: "Dev-Deploy"
+    runs-on: [self-hosted, Linux]
+    if: github.ref == 'refs/heads/main'
+    steps:
+
+      - name: Define developement cicd variables.
+        run: |
+          echo "AWS_ACCOUNT_ID=189687473457" >> "$GITHUB_ENV"
+
+      - name: generate RANDOM string
+        run: echo RANDOME_STR=$(date | base64 | sed 's/=//g') >> $GITHUB_ENV
+      - name: Assume the role and get the temp creds
+        uses: aws-actions/configure-aws-credentials@v1
+        with:
+          role-to-assume: arn:aws:iam::${{ env.AWS_ACCOUNT_ID }}:role/demo-application-role
+          aws-region: sa-east-1
+          role-skip-session-tagging: true
+          role-session-name: ${{env.RANDOME_STR}}
+          role-duration-seconds: 900
+
+      - name: Login to Amazon ECR
+        id: login-ecr
+        uses: aws-actions/amazon-ecr-login@v1
+
+      - name: Build, tag, and push image to Amazon ECR
+        env:
+          ECR_REGISTRY: ${{ steps.login-ecr.outputs.registry }}
+          ECR_REPOSITORY: "arn:aws:ecr:region:${{ env.AWS_ACCOUNT_ID }}:repository/${GITHUB_REPOSITORY#*/}:${GITHUB_SHA::8}"
+          IMAGE_TAG: "${GITHUB_SHA::8}"
+        run: |
+          docker tag ${GITHUB_REPOSITORY#*/}:${GITHUB_SHA::8} "${{ env.AWS_ACCOUNT_ID }}.dkr.ecr.sa-east-1.amazonaws.com/${GITHUB_REPOSITORY#*/}:${GITHUB_SHA::8}"
+          docker push "${{ env.AWS_ACCOUNT_ID }}.dkr.ecr.sa-east-1.amazonaws.com/${GITHUB_REPOSITORY#*/}:${GITHUB_SHA::8}"
+
+      - name: Setup Kustomize
+        uses: imranismail/setup-kustomize@v1
+        with:
+          kustomize-version: "3.6.1"
+      
+      - name: Check out code
+        uses: actions/checkout@v2
+        with:
+          repository: akshaypandhare17/kubernetes_manifest
+          ref: 'main'
+          path: './kustomize'
+          token: "${{ secrets.GH_PAT }}"
+
+      - name: Update Kubernetes resources
+        run: |
+         cd ./kustomize/kustomization/${GITHUB_REPOSITORY#*/}/overlays/dev
+         kustomize edit set image demo_image="${{ env.AWS_ACCOUNT_ID }}.dkr.ecr.sa-east-1.amazonaws.com/${GITHUB_REPOSITORY#*/}:${GITHUB_SHA::8}"
+
+      - uses: stefanzweifel/git-auto-commit-action@v4
+        with:
+          commit_message: "Changes docker image to tags to ${GITHUB_SHA::8}"
+          branch: main
+          repository: './kustomize/'
+          commit_user_name: 'akshaypandhare17'
+          commit_user_email: 'akshay.pandhare@cldcvr.com'
