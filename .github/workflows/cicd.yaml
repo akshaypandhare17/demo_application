@@ -36,17 +36,6 @@ jobs:
         run: |
           echo "AWS_ACCOUNT_ID=189687473457" >> "$GITHUB_ENV"
 
-      - name: generate RANDOM string
-        run: echo RANDOME_STR=$(date | base64 | sed 's/=//g') >> $GITHUB_ENV
-      - name: Assume the role and get the temp creds
-        uses: aws-actions/configure-aws-credentials@v1
-        with:
-          role-to-assume: arn:aws:iam::${{ env.AWS_ACCOUNT_ID }}:role/demo-application-role
-          aws-region: sa-east-1
-          role-skip-session-tagging: true
-          role-session-name: ${{env.RANDOME_STR}}
-          role-duration-seconds: 900
-
       - name: Login to Amazon ECR
         id: login-ecr
         uses: aws-actions/amazon-ecr-login@v1
